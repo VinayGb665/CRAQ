@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 	"time"
-	"flag"
-	"sync"
+	// "flag"
+	// "sync"
 	"chainr/utils"	
 	"math/rand"
-	// "chainr/types"
+	"chainr/types"
 	"chainr/client"
 )
 
@@ -91,33 +91,22 @@ func runTest(batchSize int){
 }
 
 func main(){	
-	fmt.Println("Starting Client")
+	// fmt.Println("Starting Client")
+	// master, err := utils.GetMonitorClient()
+	// if err != nil{
+	// 	fmt.Println("Error getting master client")
+	// 	return
+	// }
+	
 	// var lastWriteValue string
 	// var lastReadValue string
 	
-
+/* 
 	var wg sync.WaitGroup
-	// readPtr := flag.String("read", "nil", "read key")
-	// writePtr := flag.Bool("write", false, "write flag")
-	// writeKeyPtr := flag.String("key", " ", "write key")
-	// writeValuePtr := flag.String("value", " ", "write value")
 	flag.Parse()
 
 	test:= func (batchSize int){
 		runTest(batchSize)
-		// for i:=0; i<1000; i++{
-		// 	newNum := rand.Intn(100)
-		// 	if newNum>=70{
-		// 		lastReadValue = readRandom()
-		// 		fmt.Println("Read value:", lastReadValue)
-		// 		fmt.Println("Last write value:", lastWriteValue)
-
-		// 	} else {
-		// 		lastWriteValue = writeRandom()
-		// 	}
-		// 	fmt.Println("Request number:", i)
-		// 	time.Sleep(time.Millisecond * 1)
-		// }
 		wg.Done()
 	}
 	wg.Add(1)
@@ -125,7 +114,13 @@ func main(){
 	// go test(1000)
 	wg.Wait()
 	 
-	return
+	return */
+
+	// readPtr := flag.String("read", "nil", "read key")
+	// writePtr := flag.Bool("write", false, "write flag")
+	// writeKeyPtr := flag.String("key", " ", "write key")
+	// writeValuePtr := flag.String("value", " ", "write value")
+	
 
 	// if *readPtr != "nil" {
 	// 	fmt.Println("Reading key:", *readPtr)
@@ -135,8 +130,36 @@ func main(){
 	// } else {
 	// 	fmt.Println("Please provide a read or write flag")
 	// }
+	
+	// Write part
+/* 	
+	if err != nil{
+		fmt.Println("Error getting monitor client")
+		return
+	}
+	writeReplica := types.ReplicaClient{}
+	master.Call("Master.GetWriteReplica", types.GetReplicasRequest{}, &writeReplica)
+	fmt.Println("Write replica:", writeReplica)
+	fmt.Println("Writing big string")
+	bigBytesArray := make([]byte, 1024*1024*100)
+	rand.Read(bigBytesArray)
+	resp := utils.PushToReplica(writeReplica, "key2", bigBytesArray)
+	fmt.Println("Response:", resp)
+
+ */
+	// Read part
+	// readReplica := types.ReplicaClient{}
+	// master.Call("Master.GetReadReplica", types.GetReplicasRequest{}, &readReplica)
+	// fmt.Println("Read replica:", readReplica)
+	// // valueArray := make([]byte, 1024*1024*100)
+	// resp :=  utils.ReadFromReplica(readReplica, "key2", 0, 1000)
+	// fmt.Println("Response:", resp) 
+
+
+	BenchMarkWrites()
 
 }
+
 
 
 	// client, err := utils.GetMonitorClient()
@@ -152,3 +175,63 @@ func main(){
 
 	// fmt.Println("Write response from server:", resp.Success)
 	
+
+func BenchMarkWrites(){
+	fmt.Println("Starting Benchmark")
+	master, err := utils.GetMonitorClient()
+	if err != nil{
+		fmt.Println("Error getting master client")
+		return
+	}
+	writeReplica := types.ReplicaClient{}
+	master.Call("Master.GetWriteReplica", types.GetReplicasRequest{}, &writeReplica)
+	fmt.Println("Write replica:", writeReplica)
+	fmt.Println("Writing big string")
+
+	// Increase size of array to be written exponentially
+	// Start at 100KB, Max size is 500MB
+	// Array is a byte array
+	// For each size take a sample of 10 writes
+	size := 1024*100
+	runsPerSize := 10
+	var bigBytesArray []byte;
+	writeTimes := make(map[int][10]int64)
+	for {
+		fmt.Println("Iteration size:", size)
+		// writeTimes[size] = 
+		// create a 10 length array of write times
+		nestedTimings := [10]int64{}
+		for i:=0; i<runsPerSize; i++{
+			key:= randSeq(10)
+			// Create array of size
+			bigBytesArray = make([]byte, size)
+			rand.Read(bigBytesArray)
+			start := time.Now()
+
+			_ = utils.PushToReplica(writeReplica, key, bigBytesArray)
+			nestedTimings[i] = time.Since(start).Microseconds()
+			time.Sleep(time.Millisecond * 1) 
+		}
+		writeTimes[size] = nestedTimings
+		// Print average time for current size
+		
+		var sum int= 0
+		for i:=0; i<runsPerSize; i++{
+			sum +=int( writeTimes[size][i])
+		}
+		var avg float64 = float64(sum)/(10*100000)
+		fmt.Println("Average time for size:", avg)
+		// writeTimes[size] = nestedTimings
+
+		size *= 2
+		if size > 1024*1024*10 {
+			break
+		}
+		
+	}
+	// bigBytesArray := make([]byte, 1024*1024*100)
+	
+	// rand.Read(bigBytesArray)
+	// resp := utils.PushToReplica(writeReplica, "key2", bigBytesArray)
+	// fmt.Println("Response:", resp)
+}

@@ -7,8 +7,21 @@ import (
 	"net"
 	"log"
 	"time"
+	"math/rand"
 	"chainr/types"
 )
+
+var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+func RandomGen(n int) string {
+	s1 := rand.NewSource(time.Now().UnixNano())
+    r1 := rand.New(s1)
+    b := make([]rune, n)
+    for i := range b {
+        b[i] = letters[r1.Intn(len(letters))]
+    }
+    return string(b)
+}
 
 func GetRPCConnection(ip string, port string) (client *rpc.Client, err error) {
 	client, err = rpc.Dial("tcp", ip+":"+port)
@@ -91,20 +104,20 @@ func RunMonitor(replicas *[]types.ReplicaClient){
 	}
 }
 
-func AddReplicaToMonitor(ip string, port string) error {
+func AddReplicaToMonitor(ip string, port string, id string) (clients *types.GetReplicasReply, err error) {
 	client, err := GetMonitorClient()
 	if err != nil {
-		return err
+		return nil, err	
 	}
 	var resp = new(types.GetReplicasReply)
-	err = client.Call("Master.AddClient", types.ReplicaClient{ip, port, nil}, &resp)
+	err = client.Call("Master.AddClient", types.AddClientRequest{ip, port, id}, &resp)
 	if err != nil {
 		fmt.Println("Error while talking to the master monitor:", err)
-		return err
+		return resp, err
 	}
 	client.Close()
 	fmt.Println("Replicas:", resp.Replicas)
-	return nil
+	return resp, err
 }
 
 
@@ -122,4 +135,36 @@ func SendWriteToReplica(replicaClient types.ReplicaClient, request types.WriteRe
 	}
 	client.Close()
 	return resp.Success, nil
+}
+
+
+func PushToReplica(writeReplica types.ReplicaClient, topic string, value []byte) bool {
+	writeReplicaRPC, err := GetRPCConnection(writeReplica.Ip, writeReplica.Port)
+	pushEventRequest := types.PushToTopicRequest{
+		TopicName: topic,
+		Value: value,
+	}
+	resp := types.PushToTopicResponse{}
+	err = writeReplicaRPC.Call("Replica.PushToTopic", pushEventRequest, &resp)
+	if err != nil{
+		fmt.Println("Error pushing to topic", err)
+		return false
+	}
+	return resp.Success
+}
+
+func ReadFromReplica(readReplica types.ReplicaClient, topic string , offset int , size int) *types.ReadObjectResponse {
+	readReplicaRPC, err := GetRPCConnection(readReplica.Ip, readReplica.Port)
+	readObjectReq := types.ReadObjectRequest{
+		TopicName: topic,
+		Offset: offset,
+		Size: size,
+	}
+	resp := types.ReadObjectResponse{}
+	err = readReplicaRPC.Call("Replica.ReadObject", readObjectReq, &resp)
+	if err != nil{
+		fmt.Println("Error pushing to topic", err)
+		return nil
+	}
+	return &resp
 }

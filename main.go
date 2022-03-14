@@ -6,6 +6,7 @@ import (
 	"net/rpc"
 	"chainr/master" 
 	// "chainr/utils"
+	"sync"
 
 )
 
@@ -22,8 +23,9 @@ func monitorReplicas(){
 
 func main(){
 
-	m := new(master.Master)
-	rpc.Register(m)
+	m := master.Master{
+	}
+	rpc.Register(&m)
 	rpc.HandleHTTP()
 	
 	l, e := net.Listen("tcp", ":1234")
@@ -31,9 +33,18 @@ func main(){
 		fmt.Println(e)
 	}
 	// go utils.RunMonitor(&master.ReplicaClients)
-	go master.RunMonitor()
-	rpc.Accept(l)
+	// go master.RunMonitor(&m)
 
+	var wg sync.WaitGroup
+	go func(){
+	master.RunMonitor(&m)
+		wg.Done()
+	}()
+	wg.Add(1)
+
+	
+	// wg.Wait()
+	rpc.Accept(l)
 	
 	// fmt.Println(master.Add(1,2))
 }

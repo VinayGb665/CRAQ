@@ -14,62 +14,40 @@ import (
 
 var ReplicasMapping = types.Clients{
 	Clients : []types.ReplicaClient{},
-	HeadReplica : nil,
-	TailReplica : nil,
 }
+
+
 
 var wg sync.WaitGroup
 
 
-type Master int
+type Master struct {
+	Mu sync.Mutex
+	Clients types.Clients
+
+}
 
 
 
-func (t *Master) AddClient(client types.ReplicaClient, reply *types.GetReplicasReply,) error {
+func (t *Master) AddClient(client types.AddClientRequest, reply *types.GetReplicasReply) error {
 	log.Println("Adding client: ", client.Ip, client.Port)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func(){
-		ReplicasMapping.Add(client)
-		wg.Done()
-		
-	}()
-	wg.Wait()
-	reply.Replicas = ReplicasMapping.Clients
+	// log.Println("Client added: ", t.Clients)
+	t.Mu.Lock()
+	defer t.Mu.Unlock()
+
+	
+	t.Clients.Add(client)	
+	reply.Replicas = t.Clients.Clients
+	// t.Mu.Unlock()
+
 	return nil
 }
 
 func (t *Master) WriteData(data types.WriteRequest, reply *types.WriteResponse) error {
-	
-	var currentWriteReplica = ReplicasMapping.HeadReplica
-	successfulWriteCount := 0
-	for {
-		if currentWriteReplica == nil {
-			log.Println("No replicas left to write")
-			if successfulWriteCount == 0 {
-				reply.Success = false
-				return nil
-			}
-		}
-		log.Println("Writing data", currentWriteReplica)
-		success, err := utils.SendWriteToReplica(*currentWriteReplica, data)
-		if err != nil {
-			log.Println("Error while writing to replica", err)
-			continue
-		}
-		if success{
-			successfulWriteCount++
+	for i:=0; i<len(t.Clients.Clients); i++{
+		log.Println("Writing to client", i)
 
-		}
-		currentWriteReplica = currentWriteReplica.Next
-		log.Println("Remaining replicas to write: ", len(ReplicasMapping.Clients) - successfulWriteCount)
-		if successfulWriteCount == len(ReplicasMapping.Clients) {
-			log.Println("Successfully wrote to all replicas")
-			break
-		}
-		// time.Sleep(5 * time.Second)
 	}
-	
 	reply.Success = true
 	return nil
 }
@@ -77,74 +55,95 @@ func (t *Master) WriteData(data types.WriteRequest, reply *types.WriteResponse) 
 func (t *Master) GetReadReplica(request types.GetReplicasRequest, reply *types.ReplicaClient) error {
 	ReplicasMapping.Mu.Lock()
 	defer ReplicasMapping.Mu.Unlock()
-	log.Println("Getting read replica", ReplicasMapping.TailReplica)
-	if ReplicasMapping.TailReplica == nil {
-		log.Println("No replicas available")
-		reply = nil
-		return nil
-	}
-	// reply = ReplicasMapping.TailReplica
-	reply.Ip = ReplicasMapping.TailReplica.Ip
-	reply.Port = ReplicasMapping.TailReplica.Port
+	lastIndex := len(t.Clients.Clients) - 1	
+	reply.Ip = t.Clients.Clients[lastIndex].Ip
+	reply.Port = t.Clients.Clients[lastIndex].Port
 	return nil
 }
 
 
-func RunMonitor(){
+
+func RunMonitor(t *Master) {
 	log.Println("Starting monitor")
 	
-	
 	for {
-		wg.Add(1)
+		t.Mu.Lock()
 
-		go func () {
-			MonitorList()
-			wg.Done()
-		}()
-		time.Sleep(5 * time.Second)
-		wg.Wait()
-
+		MonitorList(t)
+		t.Mu.Unlock()
+		time.Sleep(30 * time.Second)
 	}
+
+	
 }
 
-func MonitorList(){
-	var PrevNode *types.ReplicaClient
+
+/* func UpdateClients(clients []ReplicaClient) {
+	log.Println("Updating clients" , clients)
+
+	for i:=0; i<len(clients); i++{
+		
+		rc, err :=rpc.Dial("tcp", clients[i].Ip + ":" + c.Clients[i].Port)
+		if err != nil{
+			log.Println("Error in dialing client: ", err)
+			return
+		}
+		log.Println("Dialed client: ", c.Clients[i].Ip + ":" + c.Clients[i].Port)
+		resp := UpdateClientsResponse{}
+		err = rc.Call("Replica.UpdateClients", &UpdateClientsRequest{Index: i, Clients: c.Clients}, &resp)
+		log.Println("Updated client: ", resp)
+		if err != nil{
+			log.Println("Error in updating clients", err)
+
+		} else{
+			log.Println(resp)
+		}
+
+	}
+	return 
+}
+ */
+
+func MonitorList(t *Master) {
+	newClients := []types.ReplicaClient{}
+	count := 0
+	t.Clients.Mu.Lock()
+	clientsToCheck := t.Clients.Clients
 	
-	ReplicasMapping.Mu.Lock()
-	defer ReplicasMapping.Mu.Unlock()
-	var headReplica = ReplicasMapping.HeadReplica
+	t.Clients.Mu.Unlock()
+	log.Println("Replica List", clientsToCheck, len(clientsToCheck))
 
-	for {
+	dropIndices := []int{}
+	for i:=0; i<len(clientsToCheck); i++{
 
-		if headReplica != nil {
-
-			isAlive, err := utils.CheckIfReplicaIsAlive(*headReplica)
-			if err != nil {
-				log.Println("Error while talking to replica", err)
-				
-			}
-			if !isAlive {
-				log.Println("Replica is dead, removing it from the list")
-				if PrevNode == nil {
-					ReplicasMapping.HeadReplica = headReplica.Next
-				} else {
-					PrevNode.Next = headReplica.Next
-				}
-
-				if headReplica.Next == nil {
-					ReplicasMapping.TailReplica = PrevNode
-				}
-			} 
+		_, err := utils.GetRPCConnection(clientsToCheck[i].Ip, clientsToCheck[i].Port)
+		if err != nil {
+			log.Println("Error dialing: ", err)
+			count++
+			dropIndices = append(dropIndices, i)
+			log.Println("Updated")
 			
-			PrevNode = headReplica
-			headReplica = headReplica.Next
-
-
-		} else {
-			// log.Println("Reached end of chain")
-			break
+			continue
+		} else{
+			newClients = append(newClients, clientsToCheck[i])
 		}
 	}
+	if count >0{
+		t.Clients.Mu.Lock()
+		t.Clients.Clients = newClients
+		t.Clients.UpdateClients(newClients)
+		t.Clients.Mu.Unlock()
+	}
+	
+
+
 
 }
 
+func(t *Master) GetWriteReplica(request types.GetReplicasRequest, reply *types.ReplicaClient) error {
+	t.Clients.Mu.Lock()
+	defer t.Clients.Mu.Unlock()
+	reply.Ip = t.Clients.Clients[0].Ip
+	reply.Port = t.Clients.Clients[0].Port
+	return nil
+}
